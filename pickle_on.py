@@ -203,6 +203,7 @@ if 'player_names_input_value' not in st.session_state:
     st.session_state.player_names_input_value = ""
 
 def reset_game_state():
+    """Resets all session state variables for a new game."""
     st.session_state.all_players = []
     st.session_state.num_courts = 0
     st.session_state.game_number = 0
@@ -211,7 +212,7 @@ def reset_game_state():
     st.session_state.sitting_out_display = ""
     st.session_state.player_names_input_value = ""
     st.toast("Game reset!")
-    st.experimental_rerun()
+    # Removed st.experimental_rerun() - Streamlit will rerun naturally due to session state changes.
 
 
 def start_game_logic():
@@ -282,14 +283,14 @@ def next_game_logic():
     st.toast(f"Game {st.session_state.game_number} generated!")
 
 def update_display(court_assignments, players_sitting_out):
-    court_text_lines = [] # Use a list to store each line
+    court_text_lines = []
     if court_assignments:
         for i, court in enumerate(court_assignments):
             if len(court) == 4:
                 court_text_lines.append(f"Court {i+1}: **{court[0].name} & {court[1].name}** vs. **{court[2].name} & {court[3].name}**")
             elif len(court) > 0:
                 court_text_lines.append(f"Court {i+1}: {', '.join([p.name for p in court])} (incomplete)")
-        st.session_state.court_assignments_display = "\n\n".join(court_text_lines) # Join with double newline for paragraphs
+        st.session_state.court_assignments_display = "\n\n".join(court_text_lines)
     else:
         st.session_state.court_assignments_display = "No players assigned to courts."
         
