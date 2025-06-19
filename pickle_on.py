@@ -282,18 +282,17 @@ def next_game_logic():
     st.toast(f"Game {st.session_state.game_number} generated!")
 
 def update_display(court_assignments, players_sitting_out):
-    court_text = ""
+    court_text_lines = [] # Use a list to store each line
     if court_assignments:
         for i, court in enumerate(court_assignments):
             if len(court) == 4:
-                court_text += f"Court {i+1}: **{court[0].name} & {court[1].name}** vs. **{court[2].name} & {court[3].name}**\n"
+                court_text_lines.append(f"Court {i+1}: **{court[0].name} & {court[1].name}** vs. **{court[2].name} & {court[3].name}**")
             elif len(court) > 0:
-                court_text += f"Court {i+1}: {', '.join([p.name for p in court])} (incomplete)\n"
+                court_text_lines.append(f"Court {i+1}: {', '.join([p.name for p in court])} (incomplete)")
+        st.session_state.court_assignments_display = "\n\n".join(court_text_lines) # Join with double newline for paragraphs
     else:
-        court_text = "No players assigned to courts."
+        st.session_state.court_assignments_display = "No players assigned to courts."
         
-    st.session_state.court_assignments_display = court_text
-
     sitting_out_text = ""
     if players_sitting_out:
         sitting_out_text = f"**{', '.join([p.name for p in players_sitting_out])}**"
@@ -319,7 +318,6 @@ def remove_player_logic(player_to_remove_name):
         if st.session_state.game_started:
             st.warning("Player removed. Click 'Next Game' to re-assign players based on the updated list.")
             
-        # Streamlit will rerun automatically when session state changes, no explicit rerun needed.
     else:
         st.error(f"Player '{player_to_remove_name}' not found.")
 
@@ -352,14 +350,12 @@ with st.sidebar:
         key='num_courts_input'
     )
     
-    # --- Buttons moved here ---
     col_start, col_reset = st.columns(2)
     with col_start:
         st.button("Start Game", on_click=start_game_logic, disabled=st.session_state.game_started)
     with col_reset:
         st.button("Reset Game", on_click=reset_game_state)
 
-    # Next Game and Show Stats buttons
     st.button("Next Game", on_click=next_game_logic, disabled=not st.session_state.game_started)
     st.button("Show Player Stats", on_click=show_player_stats_logic, disabled=not st.session_state.game_started)
 
