@@ -2,7 +2,7 @@ import streamlit as st
 import random
 import collections
 
-# --- Core Logic Classes and Functions (Mostly Reusable) ---
+# --- Core Logic Classes and Functions (No Change Needed Here) ---
 
 class Player:
     def __init__(self, name):
@@ -187,8 +187,6 @@ st.set_page_config(
 st.title("🎾 Pickleball Court Picker")
 
 # Initialize session state variables if they don't exist
-# Streamlit reruns the script from top to bottom on every interaction.
-# st.session_state is crucial to preserve variables across reruns.
 if 'all_players' not in st.session_state:
     st.session_state.all_players = []
 if 'num_courts' not in st.session_state:
@@ -201,19 +199,25 @@ if 'court_assignments_display' not in st.session_state:
     st.session_state.court_assignments_display = "No game started yet."
 if 'sitting_out_display' not in st.session_state:
     st.session_state.sitting_out_display = ""
+if 'player_names_input_value' not in st.session_state:
+    st.session_state.player_names_input_value = ""
 
 def reset_game_state():
-    """Resets all session state variables for a new game."""
     st.session_state.all_players = []
     st.session_state.num_courts = 0
     st.session_state.game_number = 0
     st.session_state.game_started = False
     st.session_state.court_assignments_display = "No game started yet."
     st.session_state.sitting_out_display = ""
+    st.session_state.player_names_input_value = ""
     st.toast("Game reset!")
+    st.experimental_rerun()
 
-def start_game_logic(player_names_raw, num_courts_input):
-    """Handles the logic when the 'Start Game' button is clicked."""
+
+def start_game_logic():
+    player_names_raw = st.session_state.player_names_input_value.strip()
+    num_courts_input = st.session_state.num_courts_input
+
     if not player_names_raw:
         st.error("Please enter player names.")
         return
@@ -242,27 +246,24 @@ def start_game_logic(player_names_raw, num_courts_input):
     st.session_state.game_number = 1
     st.session_state.game_started = True
 
-    # Initial assignment
     initial_eligible_players = list(st.session_state.all_players)
     random.shuffle(initial_eligible_players) 
     
     court_assignments, players_sitting_out = assign_players_to_courts(initial_eligible_players, st.session_state.num_courts)
     
-    # Manually update consecutive games and status for the first round, as rotate_players isn't called yet
     for player in st.session_state.all_players:
         if player in [p for court in court_assignments for p in court]:
             player.current_status = "playing"
-            # played_consecutive_games is already incremented in assign_players_to_courts
         else:
             player.current_status = "sitting_out"
             player.games_sat_out += 1
-            player.played_consecutive_games = 0 # Ensure reset
+            player.played_consecutive_games = 0
 
     update_display(court_assignments, players_sitting_out)
     st.success("Game started!")
 
+
 def next_game_logic():
-    """Handles the logic for the 'Next Game' button."""
     if not st.session_state.game_started:
         st.warning("Please start a game first.")
         return
@@ -281,7 +282,6 @@ def next_game_logic():
     st.toast(f"Game {st.session_state.game_number} generated!")
 
 def update_display(court_assignments, players_sitting_out):
-    """Updates the Streamlit display with current game results."""
     court_text = ""
     if court_assignments:
         for i, court in enumerate(court_assignments):
@@ -302,7 +302,6 @@ def update_display(court_assignments, players_sitting_out):
     st.session_state.sitting_out_display = sitting_out_text
 
 def remove_player_logic(player_to_remove_name):
-    """Removes a player by name from the active list."""
     player_found = None
     for player in st.session_state.all_players:
         if player.name == player_to_remove_name:
@@ -311,24 +310,20 @@ def remove_player_logic(player_to_remove_name):
     
     if player_found:
         st.session_state.all_players.remove(player_found)
-        # Clean up partners lists for remaining players
         for player in st.session_state.all_players:
             if player_found in player.partners:
                 player.partners.remove(player_found)
         
         st.toast(f"{player_found.name} removed.")
         
-        # It's highly recommended to re-run the game logic after removal
         if st.session_state.game_started:
             st.warning("Player removed. Click 'Next Game' to re-assign players based on the updated list.")
             
-        # Rerun to update the player list immediately
-        st.experimental_rerun()
+        # Streamlit will rerun automatically when session state changes, no explicit rerun needed.
     else:
         st.error(f"Player '{player_to_remove_name}' not found.")
 
 def show_player_stats_logic():
-    """Displays player statistics in a markdown format."""
     stats_text = "### Player Statistics\n"
     for player in sorted(st.session_state.all_players, key=lambda p: (p.games_played, p.games_sat_out, p.name)):
         stats_text += (f"- **{player.name}**: Played {player.games_played} games (Consecutive: {player.played_consecutive_games}), "
@@ -345,8 +340,8 @@ with st.sidebar:
     
     st.text_area(
         "Enter player names (one per line):", 
-        value='\n'.join([p.name for p in st.session_state.all_players]),
-        key='player_names_input',
+        value='\n'.join([p.name for p in st.session_state.all_players]) if st.session_state.player_names_input_value == "" else st.session_state.player_names_input_value,
+        key='player_names_input_value',
         height=180
     )
     
@@ -357,21 +352,24 @@ with st.sidebar:
         key='num_courts_input'
     )
     
-    col1, col2 = st.columns(2)
-    with col1:
-        st.button("Start Game", on_click=lambda: start_game_logic(
-            st.session_state.player_names_input, st.session_state.num_courts_input
-        ), disabled=st.session_state.game_started)
-    with col2:
+    # --- Buttons moved here ---
+    col_start, col_reset = st.columns(2)
+    with col_start:
+        st.button("Start Game", on_click=start_game_logic, disabled=st.session_state.game_started)
+    with col_reset:
         st.button("Reset Game", on_click=reset_game_state)
+
+    # Next Game and Show Stats buttons
+    st.button("Next Game", on_click=next_game_logic, disabled=not st.session_state.game_started)
+    st.button("Show Player Stats", on_click=show_player_stats_logic, disabled=not st.session_state.game_started)
 
     st.markdown("---")
     st.subheader("Manage Active Players")
     st.info("Players will appear here after 'Start Game'.")
     
     if st.session_state.all_players:
-        # Create unique keys for each button
-        for player in st.session_state.all_players:
+        players_copy = list(st.session_state.all_players)
+        for player in players_copy:
             col_player_name, col_remove_btn = st.columns([0.7, 0.3])
             with col_player_name:
                 st.write(player.name)
@@ -379,8 +377,6 @@ with st.sidebar:
                 st.button("Remove", key=f"remove_{player.name}", on_click=remove_player_logic, args=(player.name,))
     
     st.markdown("---")
-    st.button("Show Player Stats", on_click=show_player_stats_logic, disabled=not st.session_state.game_started)
-    st.button("Next Game", on_click=next_game_logic, disabled=not st.session_state.game_started)
 
 
 # Main content area for game results
