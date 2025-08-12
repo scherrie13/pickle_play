@@ -91,7 +91,7 @@ def assign_players_to_courts(eligible_players, num_courts, players_per_court=4):
 
         if potential_p4s_no_partner:
             potential_p4s_no_partner.sort(key=lambda p: len(p.partners))
-            p4 = potential_p4s[0]
+            p4 = potential_p4s_no_partner[0]  # Corrected line
         elif potential_p4s_with_partner:
             potential_p4s_with_partner.sort(key=lambda p: (len(p.partners & {p3}), random.random()))
             p4 = potential_p4s_with_partner[0]
