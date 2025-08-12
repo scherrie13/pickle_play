@@ -393,16 +393,17 @@ def export_to_excel_logic(num_games_to_export, num_courts_to_export):
         # Flatten court assignments
         for i, court in enumerate(game['Assignments']):
             if len(court) == 4:
-                df_rows.append([game_num, f"Court {i+1}", f"{court[0].name} & {court[1].name}", f"{court[2].name} & {court[3].name}", ""])
+                df_rows.append([game_num, f"Court {i+1}", f"{court[0].name} & {court[1].name}", f"{court[2].name} & {court[3].name}", "", ""])
             elif len(court) > 0:
-                df_rows.append([game_num, f"Court {i+1}", "Incomplete Court", ', '.join([p.name for p in court]), ""])
+                df_rows.append([game_num, f"Court {i+1}", "Incomplete Court", ', '.join([p.name for p in court]), "", ""])
         
         # Add sitting out players
         sitting_out_names = ', '.join([p.name for p in game['Sitting Out']]) if game['Sitting Out'] else "None"
-        df_rows.append([game_num, "Sitting Out", "", "", sitting_out_names])
+        df_rows.append([game_num, "Sitting Out", "", "", sitting_out_names, ""])
         df_rows.append([]) # Empty row for readability
 
-    df = pd.DataFrame(df_rows, columns=["Game #", "Assignment Type", "Team 1", "Team 2", "Players Sitting Out"])
+    # The updated line with the new column name
+    df = pd.DataFrame(df_rows, columns=["Game #", "Assignment Type", "Team 1", "Team 2", "Players Sitting Out", "Score"])
     
     # Use BytesIO to create an in-memory Excel file
     excel_buffer = BytesIO()
