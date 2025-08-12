@@ -1,8 +1,6 @@
 import streamlit as st
 import random
 import collections
-import pandas as pd
-from io import BytesIO
 
 # --- Core Logic Classes and Functions (No Change Needed Here) ---
 
@@ -204,7 +202,6 @@ if 'sitting_out_display' not in st.session_state:
 if 'player_names_input_value' not in st.session_state:
     st.session_state.player_names_input_value = ""
 
-
 def reset_game_state():
     """Resets all session state variables for a new game."""
     st.session_state.all_players = []
@@ -334,84 +331,6 @@ def show_player_stats_logic():
     st.markdown(stats_text)
 
 
-def export_to_excel_logic(num_games_to_export, num_courts_to_export):
-    """
-    Generates game data for a specified number of games and outputs it to an Excel file.
-    """
-    if not st.session_state.player_names_input_value:
-        st.error("Please enter player names before exporting.")
-        return
-
-    player_names_raw = st.session_state.player_names_input_value.strip()
-    players = [Player(name.strip()) for name in player_names_raw.split('\n') if name.strip()]
-    
-    if len(players) < 4:
-        st.error("Not enough players for even one court (need at least 4).")
-        return
-
-    # Use a deepcopy of players to avoid modifying the current game state
-    # A shallow copy (list(players)) is fine here since the class instances are new
-    all_players_copy = [Player(p.name) for p in players]
-
-    all_game_data = []
-
-    # First game assignment
-    court_assignments, players_sitting_out = assign_players_to_courts(all_players_copy, num_courts_to_export)
-    
-    game_data = {
-        "Game": 1,
-        "Courts": num_courts_to_export,
-        "Assignments": court_assignments,
-        "Sitting Out": players_sitting_out
-    }
-    all_game_data.append(game_data)
-    
-    for player in all_players_copy:
-        if player in [p for court in court_assignments for p in court]:
-            player.current_status = "playing"
-        else:
-            player.current_status = "sitting_out"
-            player.games_sat_out += 1
-
-    # Subsequent games
-    for game_num in range(2, num_games_to_export + 1):
-        court_assignments, players_sitting_out = rotate_players(all_players_copy, num_courts_to_export)
-        
-        game_data = {
-            "Game": game_num,
-            "Courts": num_courts_to_export,
-            "Assignments": court_assignments,
-            "Sitting Out": players_sitting_out
-        }
-        all_game_data.append(game_data)
-
-    # Convert data to a list of lists for DataFrame
-    df_rows = []
-    for game in all_game_data:
-        game_num = game['Game']
-        
-        # Flatten court assignments
-        for i, court in enumerate(game['Assignments']):
-            if len(court) == 4:
-                df_rows.append([game_num, f"Court {i+1}", f"{court[0].name} & {court[1].name}", f"{court[2].name} & {court[3].name}", ""])
-            elif len(court) > 0:
-                df_rows.append([game_num, f"Court {i+1}", "Incomplete Court", ', '.join([p.name for p in court]), ""])
-        
-        # Add sitting out players
-        sitting_out_names = ', '.join([p.name for p in game['Sitting Out']]) if game['Sitting Out'] else "None"
-        df_rows.append([game_num, "Sitting Out", "", "", sitting_out_names])
-        df_rows.append([]) # Empty row for readability
-
-    df = pd.DataFrame(df_rows, columns=["Game #", "Assignment Type", "Team 1", "Team 2", "Players Sitting Out"])
-    
-    # Use BytesIO to create an in-memory Excel file
-    excel_buffer = BytesIO()
-    with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Pickleball Games')
-    excel_buffer.seek(0)
-    
-    return excel_buffer
-
 # --- Streamlit UI Layout ---
 
 # Sidebar for initial setup and controls
@@ -455,33 +374,8 @@ with st.sidebar:
                 st.button("Remove", key=f"remove_{player.name}", on_click=remove_player_logic, args=(player.name,))
     
     st.markdown("---")
-    # New section for Excel export
-    st.subheader("Export Games to Excel 📥")
-    num_games_for_export = st.number_input(
-        "Number of games to generate:",
-        min_value=1,
-        value=5,
-        key='num_games_for_export'
-    )
-    num_courts_for_export = st.number_input(
-        "Number of courts for export:",
-        min_value=1,
-        value=st.session_state.num_courts if st.session_state.num_courts > 0 else 2,
-        key='num_courts_for_export'
-    )
 
-    if st.button("Generate Excel File"):
-        # The export_to_excel_logic function is called to generate the file
-        excel_buffer = export_to_excel_logic(num_games_for_export, num_courts_for_export)
-        if excel_buffer:
-            st.download_button(
-                label="Download Excel File",
-                data=excel_buffer,
-                file_name="pickleball_games.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
-            st.success("Excel file generated! Click 'Download' to save it.")
-    
+
 # Main content area for game results
 st.header(f"Game {st.session_state.game_number}")
 
