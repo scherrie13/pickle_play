@@ -27,83 +27,84 @@ class Player:
 
 def assign_players_to_courts(eligible_players, num_courts, players_per_court=4):
     """
-    Assigns players to courts, attempting to avoid repeat partners.
+    Assigns players to courts, attempting to avoid repeat partners more effectively.
     Returns the assignments and any unassigned players.
     """
     court_assignments = []
-    unassigned_players = []
     
     current_eligible = list(eligible_players) 
-    random.shuffle(current_eligible) # Shuffle to add randomness when choices are equal
+    random.shuffle(current_eligible)
 
-    # Keep track of players already assigned in this call to prevent double assignment
     assigned_in_this_call = set()
 
     for _ in range(num_courts):
         court = []
-        # Need 4 unique players for a full court
         potential_court_players = [p for p in current_eligible if p not in assigned_in_this_call]
         
         if len(potential_court_players) < players_per_court:
-            # Not enough players left for a full court
             break 
         
-        p1 = None
+        # Select Player 1
         potential_p1s = sorted(potential_court_players, key=lambda p: (len(p.partners), p.games_played, random.random()))
-        
-        if potential_p1s:
-            p1 = potential_p1s.pop(0)
-            court_candidates = [p1]
-            assigned_in_this_call.add(p1)
-        else:
-            break
+        if not potential_p1s: break
+        p1 = potential_p1s.pop(0)
+        court.append(p1)
+        assigned_in_this_call.add(p1)
 
+        # Select Player 2 (p1's partner)
         remaining_for_p2 = [p for p in potential_court_players if p not in assigned_in_this_call]
-        potential_p2s = [p for p in remaining_for_p2 if p not in p1.partners]
-        
-        if not potential_p2s:
-            potential_p2s = remaining_for_p2
-            if not potential_p2s:
-                unassigned_players.append(p1)
-                assigned_in_this_call.remove(p1)
-                break
-            potential_p2s.sort(key=lambda p: (len(p.partners & {p1}), random.random()))
-            p2 = potential_p2s[0]
+        # Prioritize players who have not partnered with p1
+        potential_p2s_no_partner = [p for p in remaining_for_p2 if p not in p1.partners]
+        potential_p2s_with_partner = [p for p in remaining_for_p2 if p in p1.partners]
+
+        if potential_p2s_no_partner:
+            potential_p2s_no_partner.sort(key=lambda p: len(p.partners))
+            p2 = potential_p2s_no_partner[0]
+        elif potential_p2s_with_partner:
+            potential_p2s_with_partner.sort(key=lambda p: (len(p.partners & {p1}), random.random()))
+            p2 = potential_p2s_with_partner[0]
         else:
-            potential_p2s.sort(key=lambda p: len(p.partners)) 
-            p2 = potential_p2s[0]
+            # If no partners are available, the court can't be formed
+            assigned_in_this_call.remove(p1)
+            continue
         
-        court_candidates.append(p2)
+        court.append(p2)
         assigned_in_this_call.add(p2)
 
+        # Select Player 3
         remaining_for_p3 = [p for p in potential_court_players if p not in assigned_in_this_call]
+        if not remaining_for_p3:
+            assigned_in_this_call.remove(p1)
+            assigned_in_this_call.remove(p2)
+            continue
+        
         potential_p3s = sorted(remaining_for_p3, key=lambda p: len(p.partners))
-        if not potential_p3s:
-            unassigned_players.extend([p for p in court_candidates if p not in unassigned_players])
-            break
         p3 = potential_p3s[0]
-        court_candidates.append(p3)
+        court.append(p3)
         assigned_in_this_call.add(p3)
 
+        # Select Player 4 (p3's partner)
         remaining_for_p4 = [p for p in potential_court_players if p not in assigned_in_this_call]
-        potential_p4s = [p for p in remaining_for_p4 if p not in p3.partners]
+        # Prioritize players who have not partnered with p3
+        potential_p4s_no_partner = [p for p in remaining_for_p4 if p not in p3.partners]
+        potential_p4s_with_partner = [p for p in remaining_for_p4 if p in p3.partners]
 
-        if not potential_p4s:
-            potential_p4s = remaining_for_p4
-            if not potential_p4s:
-                unassigned_players.extend([p for p in court_candidates if p not in unassigned_players])
-                break
-            potential_p4s.sort(key=lambda p: (len(p.partners & {p3}), random.random()))
+        if potential_p4s_no_partner:
+            potential_p4s_no_partner.sort(key=lambda p: len(p.partners))
             p4 = potential_p4s[0]
+        elif potential_p4s_with_partner:
+            potential_p4s_with_partner.sort(key=lambda p: (len(p.partners & {p3}), random.random()))
+            p4 = potential_p4s_with_partner[0]
         else:
-            potential_p4s.sort(key=lambda p: len(p.partners))
-            p4 = potential_p4s[0]
+            assigned_in_this_call.remove(p1)
+            assigned_in_this_call.remove(p2)
+            assigned_in_this_call.remove(p3)
+            continue
         
-        court_candidates.append(p4)
+        court.append(p4)
         assigned_in_this_call.add(p4)
         
-        court = court_candidates
-
+        # Update partner lists for the current game
         p1.partners.add(p2)
         p2.partners.add(p1)
         p3.partners.add(p4)
@@ -121,7 +122,6 @@ def assign_players_to_courts(eligible_players, num_courts, players_per_court=4):
         player.played_consecutive_games = 0
 
     return court_assignments, final_unassigned
-
 
 def rotate_players(all_players, num_courts):
     """
