@@ -15,8 +15,7 @@ if 'GLOBAL_SESSION_STORE' not in st.session_state:
      
 def get_db_connection():
     """Initializes and returns the Streamlit connection object for Google Sheets."""
-    # Assumes connection is configured in .streamlit/secrets.toml or Streamlit Cloud Secrets
-    return st.connection("gsheets", type="pandas")
+    return st.connection("gsheets")
 
 def load_session_data(session_id):
     """Reads session data from Google Sheets."""
