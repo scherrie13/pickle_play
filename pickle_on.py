@@ -3,17 +3,75 @@ import random
 import collections
 import pandas as pd
 from io import BytesIO
-import uuid # For generating a unique session ID
+import uuid
+import json
+import time
 
-# =========================================================================
-# 🚨 GLOBAL SHARED STATE (THE FIX)
-# This dictionary acts as the persistent "database" for all users on the server.
-# It stores the game history and makes the session ID visible across sessions.
-# Key: Session ID (str), Value: List of game state dicts
-GLOBAL_SESSION_STORE = {} 
-# =========================================================================
+# --- NEW DATABASE INTEGRATION FUNCTIONS (REPLACING GLOBAL STORE) ---
 
-# --- Core Logic Classes and Functions ---
+# Initialize a local copy of the store in session state (used to build up history before saving)
+if 'GLOBAL_SESSION_STORE' not in st.session_state:
+     st.session_state.GLOBAL_SESSION_STORE = {}
+     
+def get_db_connection():
+    """Initializes and returns the Streamlit connection object for Google Sheets."""
+    # Assumes connection is configured in .streamlit/secrets.toml or Streamlit Cloud Secrets
+    return st.connection("gsheets", type="pandas")
+
+def load_session_data(session_id):
+    """Reads session data from Google Sheets."""
+    conn = get_db_connection()
+    try:
+        # Cache data for a short time to improve performance but ensure near-real-time updates
+        df = conn.read(worksheet="Sessions", ttl=5) 
+        
+        # Look for the specific session ID
+        session_row = df[df['session_id'] == session_id].iloc[0]
+        
+        # The data column is a JSON string, so we must parse it back into a list
+        return json.loads(session_row['data'])
+    
+    except (IndexError, FileNotFoundError, ValueError):
+        # ValueError handles issues if the sheet is empty or the column is missing
+        return None # Session ID not found or data is invalid
+
+def save_session_data():
+    """Writes the current game history list to the Google Sheets session store."""
+    if not st.session_state.session_id:
+        return
+        
+    conn = get_db_connection()
+    session_id = st.session_state.session_id
+    
+    # 1. Attempt to read the existing sheet
+    try:
+        df = conn.read(worksheet="Sessions")
+    except Exception:
+        # If the sheet is empty or the worksheet doesn't exist, start a new DataFrame
+        df = pd.DataFrame(columns=['session_id', 'data', 'timestamp'])
+        
+    # 2. Get the history list to save from the local state
+    history_list = st.session_state.GLOBAL_SESSION_STORE.get(session_id, [])
+
+    # 3. Serialize the history list into a JSON string
+    serialized_data = json.dumps(history_list)
+    
+    # 4. Update or append the row
+    if session_id in df['session_id'].values:
+        df.loc[df['session_id'] == session_id, 'data'] = serialized_data
+        df.loc[df['session_id'] == session_id, 'timestamp'] = time.time()
+    else:
+        new_row = pd.DataFrame({
+            'session_id': [session_id], 
+            'data': [serialized_data],
+            'timestamp': [time.time()]
+        })
+        df = pd.concat([df, new_row], ignore_index=True)
+        
+    # 5. Write the entire (updated) DataFrame back to the sheet
+    conn.write(df, worksheet="Sessions")
+
+# --- Core Logic Classes and Functions (Unchanged) ---
 
 class Player:
     def __init__(self, name):
@@ -167,7 +225,6 @@ def rotate_players(all_players, num_courts):
         players_for_next_game = list(all_players)
     else:
         # Candidate pool for sitting out: players who are currently available.
-        # Prioritize those who have played more consecutive games, then played more overall, then sat out less.
         sit_out_candidates = sorted(
             [p for p in all_players if p.current_status == "available"],
             key=lambda p: (-p.played_consecutive_games, -p.games_played, p.games_sat_out, random.random())
@@ -204,33 +261,19 @@ st.set_page_config(
 
 st.title("🎾 Pickleball Court Picker")
 
-# --- Session State Variables for Sharing ---
-if 'session_id' not in st.session_state:
-    st.session_state.session_id = None
-if 'current_game_state' not in st.session_state:
-    st.session_state.current_game_state = {} 
-if 'is_session_viewer' not in st.session_state:
-    st.session_state.is_session_viewer = False
-if 'current_assignments' not in st.session_state:
-    st.session_state.current_assignments = []
-if 'current_sitting_out' not in st.session_state:
-    st.session_state.current_sitting_out = []
-
-# Initialize original session state variables if they don't exist
-if 'all_players' not in st.session_state:
-    st.session_state.all_players = []
-if 'num_courts' not in st.session_state:
-    st.session_state.num_courts = 0
-if 'game_number' not in st.session_state:
-    st.session_state.game_number = 0
-if 'game_started' not in st.session_state:
-    st.session_state.game_started = False
-if 'court_assignments_display' not in st.session_state:
-    st.session_state.court_assignments_display = "No game started yet."
-if 'sitting_out_display' not in st.session_state:
-    st.session_state.sitting_out_display = ""
-if 'player_names_input_value' not in st.session_state:
-    st.session_state.player_names_input_value = ""
+# --- Session State Variables ---
+if 'session_id' not in st.session_state: st.session_state.session_id = None
+if 'current_game_state' not in st.session_state: st.session_state.current_game_state = {} 
+if 'is_session_viewer' not in st.session_state: st.session_state.is_session_viewer = False
+if 'current_assignments' not in st.session_state: st.session_state.current_assignments = []
+if 'current_sitting_out' not in st.session_state: st.session_state.current_sitting_out = []
+if 'all_players' not in st.session_state: st.session_state.all_players = []
+if 'num_courts' not in st.session_state: st.session_state.num_courts = 0
+if 'game_number' not in st.session_state: st.session_state.game_number = 0
+if 'game_started' not in st.session_state: st.session_state.game_started = False
+if 'court_assignments_display' not in st.session_state: st.session_state.court_assignments_display = "No game started yet."
+if 'sitting_out_display' not in st.session_state: st.session_state.sitting_out_display = ""
+if 'player_names_input_value' not in st.session_state: st.session_state.player_names_input_value = ""
 
 
 def get_current_state_for_history():
@@ -244,7 +287,6 @@ def get_current_state_for_history():
     if st.session_state.current_sitting_out:
         sitting_out_by_name = [p.name for p in st.session_state.current_sitting_out]
 
-    # Save a simplified version of all_players stats for the viewer to see history
     player_stats_for_view = [
         {"name": p.name, "played": p.games_played, "sat_out": p.games_sat_out} 
         for p in st.session_state.all_players
@@ -259,22 +301,31 @@ def get_current_state_for_history():
     }
 
 def update_session_history():
-    """Updates the simulated persistent history using the GLOBAL store."""
+    """Updates the GLOBAL_SESSION_STORE (local copy) and then saves it to Google Sheets."""
     if st.session_state.session_id:
         state = get_current_state_for_history()
+        session_id = st.session_state.session_id
+
+        # Use the isolated session state to hold the current session's history
+        # (This is a necessity for internal Streamlit logic and is then persisted by save_session_data)
+        if session_id not in st.session_state.GLOBAL_SESSION_STORE:
+            # Load the history from the sheet when first creating/joining
+            loaded_history = load_session_data(session_id)
+            if loaded_history is None:
+                st.session_state.GLOBAL_SESSION_STORE[session_id] = []
+            else:
+                st.session_state.GLOBAL_SESSION_STORE[session_id] = loaded_history
+
+        history_list = st.session_state.GLOBAL_SESSION_STORE[session_id]
         
-        # Check and initialize the list in the GLOBAL store
-        if st.session_state.session_id not in GLOBAL_SESSION_STORE:
-            GLOBAL_SESSION_STORE[st.session_state.session_id] = []
-        
-        # Reference the list from the GLOBAL store
-        history_list = GLOBAL_SESSION_STORE[st.session_state.session_id]
-        
-        # Ensure we only have one state per game_number in the history list for simplicity
+        # Ensure we only have one state per game_number
         if history_list and history_list[-1]['game_number'] == state['game_number']:
             history_list[-1] = state # Overwrite
         else:
             history_list.append(state) # Append new game state
+
+        # Crucial step: Persist the data externally
+        save_session_data()
 
 def reset_game_state():
     """Resets all session state variables for a new game."""
@@ -285,11 +336,12 @@ def reset_game_state():
     st.session_state.court_assignments_display = "No game started yet."
     st.session_state.sitting_out_display = ""
     st.session_state.player_names_input_value = ""
-    st.session_state.session_id = None # Crucial reset for the new feature
+    st.session_state.session_id = None
     st.session_state.current_game_state = {}
     st.session_state.is_session_viewer = False
     st.session_state.current_assignments = []
     st.session_state.current_sitting_out = []
+    st.session_state.GLOBAL_SESSION_STORE = {} # Reset local copy of store
     st.toast("Game reset!")
 
 
@@ -297,9 +349,10 @@ def create_session_logic():
     """Generates a new session ID when a game is started."""
     if st.session_state.game_started and not st.session_state.session_id:
         st.session_state.session_id = str(uuid.uuid4())[:8].upper()
-        # Ensure a new history list is created for this ID in the GLOBAL store
-        GLOBAL_SESSION_STORE[st.session_state.session_id] = []
-        update_session_history() # Save the first game state
+        
+        # Initialize the new session locally and persist it
+        st.session_state.GLOBAL_SESSION_STORE[st.session_state.session_id] = []
+        update_session_history() # Saves the first game state to the sheet
         st.toast(f"Session created: {st.session_state.session_id}")
     elif st.session_state.session_id:
          st.warning(f"Session already active: {st.session_state.session_id}")
@@ -341,7 +394,7 @@ def start_game_logic():
     st.session_state.num_courts = num_courts
     st.session_state.game_number = 1
     st.session_state.game_started = True
-    st.session_state.is_session_viewer = False # Ensure creator mode is active
+    st.session_state.is_session_viewer = False
 
     initial_eligible_players = list(st.session_state.all_players)
     random.shuffle(initial_eligible_players) 
@@ -356,8 +409,8 @@ def start_game_logic():
             player.games_sat_out += 1
             player.played_consecutive_games = 0
 
-    st.session_state.current_assignments = court_assignments # Save for history logging
-    st.session_state.current_sitting_out = players_sitting_out # Save for history logging
+    st.session_state.current_assignments = court_assignments
+    st.session_state.current_sitting_out = players_sitting_out
     
     update_display(court_assignments, players_sitting_out)
     st.success("Game started!")
@@ -383,8 +436,8 @@ def next_game_logic():
     
     court_assignments, players_sitting_out = rotate_players(st.session_state.all_players, st.session_state.num_courts)
     
-    st.session_state.current_assignments = court_assignments # Save for history logging
-    st.session_state.current_sitting_out = players_sitting_out # Save for history logging
+    st.session_state.current_assignments = court_assignments
+    st.session_state.current_sitting_out = players_sitting_out
 
     update_display(court_assignments, players_sitting_out)
     
@@ -541,23 +594,23 @@ def export_to_excel_logic(num_games_to_export, num_courts_to_export):
     
     return excel_buffer
 
-# --- Session View Mode Logic (Uses GLOBAL_SESSION_STORE) ---
+# --- Session View Mode Logic (Uses Database Connector) ---
 
 def join_session_logic(session_id_input):
     session_id = session_id_input.strip().upper()
     
-    # Check the GLOBAL store instead of the private session state
-    if session_id in GLOBAL_SESSION_STORE:
-        # Load the last game state from the history (simulating latest update)
-        game_history = GLOBAL_SESSION_STORE[session_id] 
+    # 1. Load data from the external source
+    game_history = load_session_data(session_id) 
+
+    if game_history is not None:
         if not game_history:
             st.error(f"Session **{session_id}** is empty. Start a game first.")
             return
 
         latest_state = game_history[-1]
 
-        # Populate simplified state for the viewer
-        st.session_state.all_players = [] # Clear the original player objects
+        # 2. Update local session state for the viewer
+        st.session_state.all_players = [] 
         st.session_state.num_courts = latest_state['num_courts']
         st.session_state.game_number = latest_state['game_number']
         st.session_state.game_started = True
@@ -565,7 +618,10 @@ def join_session_logic(session_id_input):
         st.session_state.current_game_state = latest_state
         st.session_state.is_session_viewer = True
         
-        # Update display using the names from the saved state
+        # 3. Local state history update (so viewer can see history list)
+        st.session_state.GLOBAL_SESSION_STORE = {session_id: game_history}
+
+        # 4. Update display using the names from the saved state
         update_display(latest_state['court_assignments'], latest_state['sitting_out'])
         
         st.success(f"Joined session **{session_id}**. Viewing Game {st.session_state.game_number}.")
@@ -595,20 +651,19 @@ if st.session_state.is_session_viewer:
     with col2:
         st.subheader("Session Game History (Last 5)")
         # Display simplified history (Last 5 games)
-        if st.session_state.session_id in GLOBAL_SESSION_STORE:
-            history_list = GLOBAL_SESSION_STORE[st.session_state.session_id]
-            for state in history_list[-5:]:
-                st.markdown(f"**Game {state['game_number']} Assignments:**")
-                
-                history_assignments = []
-                for i, court in enumerate(state['court_assignments']):
-                    if len(court) == 4:
-                        history_assignments.append(f"C{i+1}: {court[0]} & {court[1]} vs. {court[2]} & {court[3]}")
-                
-                sitting_out_names = ', '.join(state['sitting_out']) if state['sitting_out'] else "None"
-                
-                st.markdown(f"- Courts: {'; '.join(history_assignments)}")
-                st.markdown(f"- Sitting Out: {sitting_out_names}")
+        history_list = st.session_state.GLOBAL_SESSION_STORE.get(st.session_state.session_id, [])
+        for state in history_list[-5:]:
+            st.markdown(f"**Game {state['game_number']} Assignments:**")
+            
+            history_assignments = []
+            for i, court in enumerate(state['court_assignments']):
+                if len(court) == 4:
+                    history_assignments.append(f"C{i+1}: {court[0]} & {court[1]} vs. {court[2]} & {court[3]}")
+            
+            sitting_out_names = ', '.join(state['sitting_out']) if state['sitting_out'] else "None"
+            
+            st.markdown(f"- Courts: {'; '.join(history_assignments)}")
+            st.markdown(f"- Sitting Out: {sitting_out_names}")
 
 else:
     # Sidebar for initial setup and controls (Creator Mode)
