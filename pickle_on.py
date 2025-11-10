@@ -181,26 +181,41 @@ def load_session_data(session_id):
     
     return None
 
+# --- UPDATED save_session_data FUNCTION ---
+
 def save_session_data():
-    """Writes session data to Google Sheets using gspread."""
     if not st.session_state.session_id:
         return
         
     client = get_gsheets_client()
     sheet = client.open_by_url(st.secrets["gsheets_auth"]["url"])
-    worksheet = sheet.worksheet("Sessions")
+    
+    # 1. Access the Worksheet with error handling
+    try:
+        worksheet = sheet.worksheet("Sessions")
+    except gspread.exceptions.WorksheetNotFound:
+        # If the worksheet doesn't exist, CREATE it.
+        # This will only work if the Service Account has permission to add sheets.
+        worksheet = sheet.add_worksheet(title="Sessions", rows=1, cols=3)
+        st.toast("Worksheet 'Sessions' created.")
+
     session_id = st.session_state.session_id
 
-    # 1. Get the current DataFrame from the sheet
-    # Must use get_all_records() for data and then fetch values for header row
+    # 2. Get the current DataFrame from the sheet
     data = worksheet.get_all_records()
     df = pd.DataFrame(data)
     
-    # 2. Get the history list to save from the local state
+    # 3. Handle Empty/Missing Header DataFrame (CRITICAL FIX)
+    # If the sheet is empty, get_all_records() returns an empty list, and df is empty.
+    if df.empty:
+        # Create a blank DataFrame with the required header columns
+        df = pd.DataFrame(columns=['session_id', 'data', 'timestamp'])
+
+    # 4. Get the history list to save from the local state
     history_list = st.session_state.GLOBAL_SESSION_STORE.get(session_id, [])
     serialized_data = json.dumps(history_list)
     
-    # 3. Update or append the row
+    # 5. Update or append the row (This is where the KeyError was raised)
     if session_id in df['session_id'].values:
         df.loc[df['session_id'] == session_id, 'data'] = serialized_data
         df.loc[df['session_id'] == session_id, 'timestamp'] = time.time()
@@ -212,13 +227,12 @@ def save_session_data():
         })
         df = pd.concat([df, new_row], ignore_index=True)
         
-    # 4. Write the whole DataFrame back to the sheet (clearing existing content)
-    # The header row is needed for the Sheet to know the column names
+    # 6. Write the whole DataFrame back to the sheet
     header = ['session_id', 'data', 'timestamp'] 
     
     worksheet.clear()
-    worksheet.update([header] + df[header].values.tolist())
-
+    worksheet.update([header] + df[header].values.tolist(), value_input_option='USER_ENTERED')
+    
 # --- REST OF THE STREAMLIT APP LOGIC (ADJUSTED) ---
 
 st.set_page_config(
