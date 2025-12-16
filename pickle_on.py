@@ -321,6 +321,89 @@ def update_session_history():
 
         save_session_data()
 
+def update_display(court_assignments, players_sitting_out):
+    # This function should already exist in your file, 
+    # but I include the definition here for structural context.
+    court_text_lines = []
+    if court_assignments:
+        for i, court in enumerate(court_assignments):
+            names = [p.name if hasattr(p, 'name') else p for p in court]
+
+            if len(court) == 4:
+                court_text_lines.append(f"Court {i+1}: **{names[0]} & {names[1]}** vs. **{names[2]} & {names[3]}**")
+            elif len(court) > 0:
+                court_text_lines.append(f"Court {i+1}: {', '.join(names)} (incomplete)")
+        st.session_state.court_assignments_display = "\n\n".join(court_text_lines)
+    else:
+        st.session_state.court_assignments_display = "No players assigned to courts."
+        
+    sitting_out_text = ""
+    if players_sitting_out:
+        names = [p.name if hasattr(p, 'name') else p for p in players_sitting_out]
+        sitting_out_text = f"**{', '.join(names)}**"
+    else:
+        sitting_out_text = "No players are sitting out this round."
+    st.session_state.sitting_out_display = sitting_out_text
+
+
+def remove_player_logic(player_to_remove_name):
+    """Removes a player from the list, updating partner history."""
+    
+    if st.session_state.is_session_viewer:
+        st.error("Cannot modify players in **Viewer Mode**.")
+        return
+
+    player_found = None
+    for player in st.session_state.all_players:
+        if player.name == player_to_remove_name:
+            player_found = player
+            break
+    
+    if player_found:
+        st.session_state.all_players.remove(player_found)
+        
+        # Remove the player from all other players' partner lists
+        for player in st.session_state.all_players:
+            if player_found in player.partners:
+                player.partners.remove(player_found)
+        
+        st.toast(f"{player_found.name} removed.")
+        
+        if st.session_state.game_started:
+            st.warning("Player removed. Click **'Next Game'** to re-assign players based on the updated list and save the change to the session.")
+            
+            # Reset game state flags to prompt the user for the next game
+            st.session_state.game_started = True 
+            st.session_state.game_number = 0 
+            st.session_state.court_assignments_display = "Player removed. Click 'Next Game' to re-assign."
+            st.session_state.sitting_out_display = ""
+            
+    else:
+        st.error(f"Player '{player_to_remove_name}' not found.")
+
+
+def show_player_stats_logic():
+    """Displays player statistics based on the current state or shared state."""
+    stats_text = "### Player Statistics\n"
+    
+    # Logic for viewer mode
+    if st.session_state.is_session_viewer and st.session_state.current_game_state and 'all_players_stats' in st.session_state.current_game_state:
+        stats_list = st.session_state.current_game_state['all_players_stats']
+        for stat in sorted(stats_list, key=lambda p: (p['played'], p['sat_out'], p['name'])):
+             stats_text += (f"- **{stat['name']}**: Played {stat['played']} games, "
+                           f"Sat out {stat['sat_out']} games\n")
+    else:
+        # Original logic for the game creator/controller
+        for player in sorted(st.session_state.all_players, key=lambda p: (p.games_played, p.games_sat_out, p.name)):
+            stats_text += (f"- **{player.name}**: Played {player.games_played} games (Consecutive: {player.played_consecutive_games}), "
+                           f"Sat out {player.games_sat_out} games\n")
+            stats_text += f"  Partners: {', '.join(sorted([p.name for p in player.partners]))}\n"
+    
+    st.markdown(stats_text)
+
+# Note: The export_to_excel_logic function should also be present in your file.
+# Since it was not flagged as missing, I assume it's there.
+
 
 def reset_game_state():
     # ... (function body omitted for brevity, resets all state)
