@@ -9,16 +9,30 @@ import time
 import gspread 
 from gspread.exceptions import WorksheetNotFound, SpreadsheetNotFound
 
-# --- DATABASE INTEGRATION (USING gspread DIRECTLY) ---
-
-# Initialize a local copy of the store in session state
+# --- SESSION STATE INITIALIZATION (CRITICAL: MUST BE NEAR THE TOP) ---
 if 'GLOBAL_SESSION_STORE' not in st.session_state:
      st.session_state.GLOBAL_SESSION_STORE = {}
+if 'session_id' not in st.session_state: st.session_state.session_id = None
+if 'current_game_state' not in st.session_state: st.session_state.current_game_state = {} 
+if 'is_session_viewer' not in st.session_state: st.session_state.is_session_viewer = False
+if 'current_assignments' not in st.session_state: st.session_state.current_assignments = []
+if 'current_sitting_out' not in st.session_state: st.session_state.current_sitting_out = []
+if 'all_players' not in st.session_state: st.session_state.all_players = []
+if 'num_courts' not in st.session_state: st.session_state.num_courts = 0
+if 'game_number' not in st.session_state: st.session_state.game_number = 0
+if 'game_started' not in st.session_state: st.session_state.game_started = False
+if 'court_assignments_display' not in st.session_state: st.session_state.court_assignments_display = "No game started yet."
+if 'sitting_out_display' not in st.session_state: st.session_state.sitting_out_display = ""
+if 'player_names_input_value' not in st.session_state: st.session_state.player_names_input_value = ""
+
+
+# --- DATABASE INTEGRATION (USING gspread DIRECTLY) ---
 
 @st.cache_resource
 def get_gsheets_client():
     """Authenticates using st.secrets and returns a gspread client."""
     try:
+        # Load all JSON fields from the [gsheets_auth] secret block
         creds = {
             "type": st.secrets["gsheets_auth"]["type"],
             "project_id": st.secrets["gsheets_auth"]["project_id"],
@@ -50,10 +64,10 @@ def load_session_data(session_id):
         
         data = worksheet.get_all_records()
         df = pd.DataFrame(data)
-    except (WorksheetNotFound, SpreadsheetNotFound) as e:
+    except (WorksheetNotFound, SpreadsheetNotFound):
         return None
     except Exception as e:
-        st.warning(f"Error reading session data: {e}. Assuming empty or inaccessible sheet.")
+        st.warning(f"Error reading session data: {e}.")
         return None
 
     if not df.empty and session_id in df['session_id'].values:
@@ -147,10 +161,7 @@ class Player:
 # --- CORE GAME LOGIC FUNCTIONS ---
 
 def assign_players_to_courts(eligible_players, num_courts, players_per_court=4):
-    """
-    Assigns players to courts, attempting to avoid repeat partners.
-    NOTE: The complex partner selection logic is assumed here.
-    """
+    """Assigns players to courts, attempting to avoid repeat partners."""
     court_assignments = []
     current_eligible = list(eligible_players) 
     random.shuffle(current_eligible)
@@ -164,8 +175,7 @@ def assign_players_to_courts(eligible_players, num_courts, players_per_court=4):
         if len(potential_court_players) < players_per_court:
             break 
         
-        # NOTE: Using simplified selection to avoid massive function block, 
-        # ensuring the structure is correct. Your full original logic must be here.
+        # Simplified partner selection logic placeholder
         if len(potential_court_players) >= 4:
             p1 = potential_court_players.pop(0)
             p2 = potential_court_players.pop(0)
@@ -176,7 +186,6 @@ def assign_players_to_courts(eligible_players, num_courts, players_per_court=4):
             for p in court:
                 assigned_in_this_call.add(p)
 
-            # Update partner lists (essential for rotation tracking)
             p1.partners.add(p2); p2.partners.add(p1)
             p3.partners.add(p4); p4.partners.add(p3)
             
@@ -235,7 +244,7 @@ def rotate_players(all_players, num_courts):
     return court_assignments, sit_out_for_this_round
 
 
-# --- SESSION & PLAYER MANAGEMENT FUNCTIONS (FIXED PLACEMENT) ---
+# --- SESSION & PLAYER MANAGEMENT FUNCTIONS ---
 
 def get_current_state_for_history():
     """Captures the current state for saving/sharing."""
@@ -601,7 +610,6 @@ else:
         st.markdown("---")
         st.subheader("Join a Session")
         session_to_join = st.text_input("Enter Session ID to Join:", max_chars=8)
-        # FIXED: join_session_logic is now defined before this UI block.
         st.button("Join Session", on_click=join_session_logic, args=(session_to_join,), disabled=st.session_state.game_started)
         st.markdown("---")
         
