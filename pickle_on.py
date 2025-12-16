@@ -51,11 +51,9 @@ def load_session_data(session_id):
         sheet = client.open_by_url(st.secrets["gsheets_auth"]["url"])
         worksheet = sheet.worksheet("Sessions")
         
-        # This function returns headers + data
         data = worksheet.get_all_records()
         df = pd.DataFrame(data)
     except (WorksheetNotFound, SpreadsheetNotFound) as e:
-        # If sheet/worksheet is not found, treat it as empty. The creation logic is in save_session_data.
         return None
     except Exception as e:
         st.warning(f"Error reading session data: {e}. Assuming empty or inaccessible sheet.")
@@ -66,7 +64,7 @@ def load_session_data(session_id):
         try:
             return json.loads(session_row['data'])
         except:
-             return None # Handle invalid JSON
+             return None 
     
     return None
 
@@ -92,17 +90,16 @@ def save_session_data():
         try:
             worksheet = sheet.add_worksheet(title="Sessions", rows=1, cols=3)
         except Exception as e:
-             st.error(f"Failed to create 'Sessions' tab. Check Service Account permissions to add/edit sheets. Error: {e}")
+             st.error(f"Failed to create 'Sessions' tab. Error: {e}")
              return
 
     session_id = st.session_state.session_id
 
     # 2. Get the current DataFrame from the sheet
-    # We read records. If the sheet is empty, get_all_records() returns [].
     data = worksheet.get_all_records()
     df = pd.DataFrame(data)
     
-    # 3. Handle Empty/Missing Header DataFrame (CRITICAL FIX)
+    # 3. Handle Empty/Missing Header DataFrame
     if df.empty:
         df = pd.DataFrame(columns=['session_id', 'data', 'timestamp'])
 
@@ -126,7 +123,6 @@ def save_session_data():
     header = ['session_id', 'data', 'timestamp'] 
     
     worksheet.clear()
-    # The header row is written first, followed by the data rows
     worksheet.update([header] + df[header].values.tolist(), value_input_option='USER_ENTERED')
 
 
@@ -158,10 +154,19 @@ class Player:
         new_player.current_status = self.current_status
         return new_player
 
+# NOTE: The assign_players_to_courts and rotate_players functions 
+# use the original robust logic for partner rotation.
+
 def assign_players_to_courts(eligible_players, num_courts, players_per_court=4):
+    """
+    Assigns players to courts, attempting to avoid repeat partners more effectively.
+    Returns the assignments and any unassigned players.
+    """
     court_assignments = []
+    
     current_eligible = list(eligible_players) 
     random.shuffle(current_eligible)
+
     assigned_in_this_call = set()
 
     for _ in range(num_courts):
@@ -171,40 +176,72 @@ def assign_players_to_courts(eligible_players, num_courts, players_per_court=4):
         if len(potential_court_players) < players_per_court:
             break 
         
-        # Simplified selection logic (reverted to original robust logic for partners)
-        if len(potential_court_players) >= 4:
-            potential_p1s = sorted(potential_court_players, key=lambda p: (len(p.partners), p.games_played, random.random()))
-            if not potential_p1s: break
-            p1 = potential_p1s.pop(0)
-            court.append(p1)
-            assigned_in_this_call.add(p1)
+        # Select Player 1
+        potential_p1s = sorted(potential_court_players, key=lambda p: (len(p.partners), p.games_played, random.random()))
+        if not potential_p1s: break
+        p1 = potential_p1s.pop(0)
+        court.append(p1)
+        assigned_in_this_call.add(p1)
 
-            # ... (rest of p2, p3, p4 selection logic from original code) ...
-            # NOTE: For brevity and to keep the file size manageable, the complex partner selection
-            # logic is assumed to be handled correctly, as the error was in persistence, not game logic.
-            # A simplified placeholder is used here, but in your file, ensure the full original logic is present.
-            
-            # Placeholder for partner selection to keep code flowing:
-            try:
-                p2 = next(p for p in potential_court_players if p not in assigned_in_this_call)
-                p3 = next(p for p in potential_court_players if p not in assigned_in_this_call and p != p2)
-                p4 = next(p for p in potential_court_players if p not in assigned_in_this_call and p not in [p2, p3])
-                court = [p1, p2, p3, p4]
-            except StopIteration:
-                 assigned_in_this_call.remove(p1)
-                 continue # Cannot form a full court
+        # Select Player 2 (p1's partner)
+        remaining_for_p2 = [p for p in potential_court_players if p not in assigned_in_this_call]
+        potential_p2s_no_partner = [p for p in remaining_for_p2 if p not in p1.partners]
+        potential_p2s_with_partner = [p for p in remaining_for_p2 if p in p1.partners]
 
-            for p in court:
-                assigned_in_this_call.add(p)
+        if potential_p2s_no_partner:
+            potential_p2s_no_partner.sort(key=lambda p: len(p.partners))
+            p2 = potential_p2s_no_partner[0]
+        elif potential_p2s_with_partner:
+            potential_p2s_with_partner.sort(key=lambda p: (len(p.partners & {p1}), random.random()))
+            p2 = potential_p2s_with_partner[0]
+        else:
+            assigned_in_this_call.remove(p1)
+            continue
+        
+        court.append(p2)
+        assigned_in_this_call.add(p2)
 
-            p1.partners.add(p2); p2.partners.add(p1)
-            p3.partners.add(p4); p4.partners.add(p3)
-            
-            for p in court:
-                p.current_status = "playing"
-                p.played_consecutive_games += 1
+        # Select Player 3
+        remaining_for_p3 = [p for p in potential_court_players if p not in assigned_in_this_call]
+        if not remaining_for_p3:
+            assigned_in_this_call.remove(p1)
+            assigned_in_this_call.remove(p2)
+            continue
+        
+        potential_p3s = sorted(remaining_for_p3, key=lambda p: len(p.partners))
+        p3 = potential_p3s[0]
+        court.append(p3)
+        assigned_in_in_this_call.add(p3)
 
-            court_assignments.append(court)
+        # Select Player 4 (p3's partner)
+        remaining_for_p4 = [p for p in potential_court_players if p not in assigned_in_this_call]
+        potential_p4s_no_partner = [p for p in remaining_for_p4 if p not in p3.partners]
+        potential_p4s_with_partner = [p for p in remaining_for_p4 if p in p3.partners]
+
+        if potential_p4s_no_partner:
+            potential_p4s_no_partner.sort(key=lambda p: len(p.partners))
+            p4 = potential_p4s_no_partner[0]
+        elif potential_p4s_with_partner:
+            potential_p4s_with_partner.sort(key=lambda p: (len(p.partners & {p3}), random.random()))
+            p4 = potential_p4s_with_partner[0]
+        else:
+            assigned_in_this_call.remove(p1)
+            assigned_in_this_call.remove(p2)
+            assigned_in_this_call.remove(p3)
+            continue
+        
+        court.append(p4)
+        assigned_in_this_call.add(p4)
+        
+        # Update partner lists for the current game
+        p1.partners.add(p2); p2.partners.add(p1)
+        p3.partners.add(p4); p4.partners.add(p3)
+        
+        for p in court:
+            p.current_status = "playing"
+            p.played_consecutive_games += 1
+
+        court_assignments.append(court)
 
     final_unassigned = [p for p in eligible_players if p not in assigned_in_this_call]
     for player in final_unassigned:
@@ -254,12 +291,13 @@ def rotate_players(all_players, num_courts):
 
     return court_assignments, sit_out_for_this_round
 
+
 # --- STREAMLIT APP STATE & FUNCTIONS ---
 
 st.set_page_config(page_title="Pickleball Court Picker", page_icon="🎾", layout="centered")
 st.title("🎾 Pickleball Court Picker")
 
-# --- Session State Initialization (All variables here) ---
+# --- Session State Initialization ---
 if 'session_id' not in st.session_state: st.session_state.session_id = None
 if 'current_game_state' not in st.session_state: st.session_state.current_game_state = {} 
 if 'is_session_viewer' not in st.session_state: st.session_state.is_session_viewer = False
@@ -275,7 +313,7 @@ if 'player_names_input_value' not in st.session_state: st.session_state.player_n
 
 
 def get_current_state_for_history():
-    # ... (function body omitted for brevity, uses st.session_state variables)
+    """Captures the current state for saving/sharing."""
     assignments_by_name = []
     if st.session_state.current_assignments:
         for court in st.session_state.current_assignments:
@@ -321,92 +359,9 @@ def update_session_history():
 
         save_session_data()
 
-def update_display(court_assignments, players_sitting_out):
-    # This function should already exist in your file, 
-    # but I include the definition here for structural context.
-    court_text_lines = []
-    if court_assignments:
-        for i, court in enumerate(court_assignments):
-            names = [p.name if hasattr(p, 'name') else p for p in court]
-
-            if len(court) == 4:
-                court_text_lines.append(f"Court {i+1}: **{names[0]} & {names[1]}** vs. **{names[2]} & {names[3]}**")
-            elif len(court) > 0:
-                court_text_lines.append(f"Court {i+1}: {', '.join(names)} (incomplete)")
-        st.session_state.court_assignments_display = "\n\n".join(court_text_lines)
-    else:
-        st.session_state.court_assignments_display = "No players assigned to courts."
-        
-    sitting_out_text = ""
-    if players_sitting_out:
-        names = [p.name if hasattr(p, 'name') else p for p in players_sitting_out]
-        sitting_out_text = f"**{', '.join(names)}**"
-    else:
-        sitting_out_text = "No players are sitting out this round."
-    st.session_state.sitting_out_display = sitting_out_text
-
-
-def remove_player_logic(player_to_remove_name):
-    """Removes a player from the list, updating partner history."""
-    
-    if st.session_state.is_session_viewer:
-        st.error("Cannot modify players in **Viewer Mode**.")
-        return
-
-    player_found = None
-    for player in st.session_state.all_players:
-        if player.name == player_to_remove_name:
-            player_found = player
-            break
-    
-    if player_found:
-        st.session_state.all_players.remove(player_found)
-        
-        # Remove the player from all other players' partner lists
-        for player in st.session_state.all_players:
-            if player_found in player.partners:
-                player.partners.remove(player_found)
-        
-        st.toast(f"{player_found.name} removed.")
-        
-        if st.session_state.game_started:
-            st.warning("Player removed. Click **'Next Game'** to re-assign players based on the updated list and save the change to the session.")
-            
-            # Reset game state flags to prompt the user for the next game
-            st.session_state.game_started = True 
-            st.session_state.game_number = 0 
-            st.session_state.court_assignments_display = "Player removed. Click 'Next Game' to re-assign."
-            st.session_state.sitting_out_display = ""
-            
-    else:
-        st.error(f"Player '{player_to_remove_name}' not found.")
-
-
-def show_player_stats_logic():
-    """Displays player statistics based on the current state or shared state."""
-    stats_text = "### Player Statistics\n"
-    
-    # Logic for viewer mode
-    if st.session_state.is_session_viewer and st.session_state.current_game_state and 'all_players_stats' in st.session_state.current_game_state:
-        stats_list = st.session_state.current_game_state['all_players_stats']
-        for stat in sorted(stats_list, key=lambda p: (p['played'], p['sat_out'], p['name'])):
-             stats_text += (f"- **{stat['name']}**: Played {stat['played']} games, "
-                           f"Sat out {stat['sat_out']} games\n")
-    else:
-        # Original logic for the game creator/controller
-        for player in sorted(st.session_state.all_players, key=lambda p: (p.games_played, p.games_sat_out, p.name)):
-            stats_text += (f"- **{player.name}**: Played {player.games_played} games (Consecutive: {player.played_consecutive_games}), "
-                           f"Sat out {player.games_sat_out} games\n")
-            stats_text += f"  Partners: {', '.join(sorted([p.name for p in player.partners]))}\n"
-    
-    st.markdown(stats_text)
-
-# Note: The export_to_excel_logic function should also be present in your file.
-# Since it was not flagged as missing, I assume it's there.
-
 
 def reset_game_state():
-    # ... (function body omitted for brevity, resets all state)
+    """Resets all session state variables for a new game."""
     st.session_state.all_players = []
     st.session_state.num_courts = 0
     st.session_state.game_number = 0
@@ -424,6 +379,7 @@ def reset_game_state():
 
 
 def create_session_logic():
+    """Generates a new session ID when a game is started."""
     if st.session_state.game_started and not st.session_state.session_id:
         st.session_state.session_id = str(uuid.uuid4())[:8].upper()
         
@@ -438,8 +394,12 @@ def start_game_logic():
     player_names_raw = st.session_state.player_names_input_value.strip()
     num_courts_input = st.session_state.num_courts_input
     
-    # ... (validation omitted) ...
-    num_courts = int(num_courts_input)
+    try:
+        num_courts = int(num_courts_input)
+    except ValueError:
+        st.error("Please enter a valid number for courts.")
+        return
+
     players = [Player(name.strip()) for name in player_names_raw.split('\n') if name.strip()]
     if len(players) < 4:
         st.error("Not enough players for even one court (need at least 4).")
@@ -500,7 +460,7 @@ def next_game_logic():
 
 
 def update_display(court_assignments, players_sitting_out):
-    # ... (function body omitted for brevity, handles display formatting)
+    """Updates the display strings in session state based on assignments."""
     court_text_lines = []
     if court_assignments:
         for i, court in enumerate(court_assignments):
@@ -523,37 +483,124 @@ def update_display(court_assignments, players_sitting_out):
     st.session_state.sitting_out_display = sitting_out_text
 
 
-def join_session_logic(session_id_input):
-    session_id = session_id_input.strip().upper()
+def remove_player_logic(player_to_remove_name):
+    """Removes a player from the list, updating partner history."""
     
-    game_history = load_session_data(session_id) 
+    if st.session_state.is_session_viewer:
+        st.error("Cannot modify players in **Viewer Mode**.")
+        return
 
-    if game_history is not None:
-        if not game_history:
-            st.error(f"Session **{session_id}** is empty. Start a game first.")
-            return
-
-        latest_state = game_history[-1]
-
-        st.session_state.all_players = [] 
-        st.session_state.num_courts = latest_state['num_courts']
-        st.session_state.game_number = latest_state['game_number']
-        st.session_state.game_started = True
-        st.session_state.session_id = session_id
-        st.session_state.current_game_state = latest_state
-        st.session_state.is_session_viewer = True
+    player_found = None
+    for player in st.session_state.all_players:
+        if player.name == player_to_remove_name:
+            player_found = player
+            break
+    
+    if player_found:
+        st.session_state.all_players.remove(player_found)
         
-        st.session_state.GLOBAL_SESSION_STORE = {session_id: game_history}
-
-        update_display(latest_state['court_assignments'], latest_state['sitting_out'])
+        for player in st.session_state.all_players:
+            if player_found in player.partners:
+                player.partners.remove(player_found)
         
-        st.success(f"Joined session **{session_id}**. Viewing Game {st.session_state.game_number}.")
+        st.toast(f"{player_found.name} removed.")
+        
+        if st.session_state.game_started:
+            st.warning("Player removed. Click **'Next Game'** to re-assign players based on the updated list and save the change to the session.")
+            
+            st.session_state.game_started = True 
+            st.session_state.game_number = 0 
+            st.session_state.court_assignments_display = "Player removed. Click 'Next Game' to re-assign."
+            st.session_state.sitting_out_display = ""
+            
     else:
-        st.error(f"Session ID **{session_id}** not found.")
+        st.error(f"Player '{player_to_remove_name}' not found.")
 
-def back_to_creator_mode():
-    reset_game_state()
-    st.toast("Returned to Creator Mode.")
+
+def show_player_stats_logic():
+    """Displays player statistics based on the current state or shared state."""
+    stats_text = "### Player Statistics\n"
+    
+    if st.session_state.is_session_viewer and st.session_state.current_game_state and 'all_players_stats' in st.session_state.current_game_state:
+        stats_list = st.session_state.current_game_state['all_players_stats']
+        for stat in sorted(stats_list, key=lambda p: (p['played'], p['sat_out'], p['name'])):
+             stats_text += (f"- **{stat['name']}**: Played {stat['played']} games, "
+                           f"Sat out {stat['sat_out']} games\n")
+    else:
+        for player in sorted(st.session_state.all_players, key=lambda p: (p.games_played, p.games_sat_out, p.name)):
+            stats_text += (f"- **{player.name}**: Played {player.games_played} games (Consecutive: {player.played_consecutive_games}), "
+                           f"Sat out {player.games_sat_out} games\n")
+            stats_text += f"  Partners: {', '.join(sorted([p.name for p in player.partners]))}\n"
+    
+    st.markdown(stats_text)
+
+def export_to_excel_logic(num_games_to_export, num_courts_to_export):
+    """Generates game data for a specified number of games and outputs it to an Excel file."""
+    if st.session_state.is_session_viewer:
+        st.error("Cannot export from viewer mode.")
+        return
+
+    player_names_raw = st.session_state.player_names_input_value.strip()
+    
+    if not player_names_raw:
+        st.error("Please enter player names before exporting.")
+        return
+
+    players = [Player(name.strip()) for name in player_names_raw.split('\n') if name.strip()]
+    
+    if len(players) < 4:
+        st.error("Not enough players for even one court (need at least 4).")
+        return
+
+    all_players_copy = [Player(p.name) for p in players]
+    all_game_data = []
+
+    # First game assignment
+    court_assignments, players_sitting_out = assign_players_to_courts(all_players_copy, num_courts_to_export)
+    
+    game_data = {
+        "Game": 1, "Courts": num_courts_to_export, "Assignments": court_assignments, "Sitting Out": players_sitting_out
+    }
+    all_game_data.append(game_data)
+    
+    for player in all_players_copy:
+        if player in [p for court in court_assignments for p in court]:
+            player.current_status = "playing"
+        else:
+            player.current_status = "sitting_out"
+            player.games_sat_out += 1
+
+    # Subsequent games
+    for game_num in range(2, num_games_to_export + 1):
+        court_assignments, players_sitting_out = rotate_players(all_players_copy, num_courts_to_export)
+        
+        game_data = {
+            "Game": game_num, "Courts": num_courts_to_export, "Assignments": court_assignments, "Sitting Out": players_sitting_out
+        }
+        all_game_data.append(game_data)
+
+    df_rows = []
+    for game in all_game_data:
+        game_num = game['Game']
+        
+        for i, court in enumerate(game['Assignments']):
+            if len(court) == 4:
+                df_rows.append([game_num, f"Court {i+1}", f"{court[0].name} & {court[1].name}", f"{court[2].name} & {court[3].name}", "", ""])
+            elif len(court) > 0:
+                df_rows.append([game_num, f"Court {i+1}", "Incomplete Court", ', '.join([p.name for p in court]), "", ""])
+        
+        sitting_out_names = ', '.join([p.name for p in game['Sitting Out']]) if game['Sitting Out'] else "None"
+        df_rows.append([game_num, "Sitting Out", "", "", sitting_out_names, ""])
+        df_rows.append([])
+
+    df = pd.DataFrame(df_rows, columns=["Game #", "Assignment Type", "Team 1", "Team 2", "Players Sitting Out", "Score"])
+    
+    excel_buffer = BytesIO()
+    with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Pickleball Games')
+    excel_buffer.seek(0)
+    
+    return excel_buffer
 
 # --- STREAMLIT UI LAYOUT ---
 
@@ -565,9 +612,15 @@ if st.session_state.is_session_viewer:
     
     st.markdown("---")
     
-    # Optional: You can put a "Refresh" button here if you want to allow manual refresh,
-    # but the auto-refresh loop below will handle it automatically.
-
+    # Display updated information for the viewer
+    st.subheader(f"Game {st.session_state.game_number} Assignments:")
+    st.markdown(st.session_state.court_assignments_display)
+    st.subheader("Players Sitting Out:")
+    st.markdown(st.session_state.sitting_out_display if st.session_state.sitting_out_display else "No players sitting out this round.")
+    
+    # Run show stats logic
+    show_player_stats_logic()
+    
 else:
     # Sidebar for initial setup and controls (Creator Mode)
     with st.sidebar:
@@ -613,14 +666,53 @@ else:
             st.button("Reset Game", on_click=reset_game_state)
 
         st.button("Next Game", on_click=next_game_logic, disabled=not st.session_state.game_started)
-        st.button("Show Player Stats", disabled=not st.session_state.game_started) # Added placeholder for stats function
+        st.button("Show Player Stats", on_click=show_player_stats_logic, disabled=not st.session_state.game_started)
+
+        st.markdown("---")
+        st.subheader("Manage Active Players")
+        st.info("Players will appear here after 'Start Game'.")
+        
+        if st.session_state.all_players:
+            players_copy = list(st.session_state.all_players)
+            for player in players_copy:
+                col_player_name, col_remove_btn = st.columns([0.7, 0.3])
+                with col_player_name:
+                    st.write(player.name)
+                with col_remove_btn:
+                    st.button("Remove", key=f"remove_{player.name}", on_click=remove_player_logic, args=(player.name,))
+        
+        st.markdown("---")
+        st.subheader("Export Games to Excel 📥")
+        num_games_for_export = st.number_input(
+            "Number of games to generate:",
+            min_value=1,
+            value=5,
+            key='num_games_for_export'
+        )
+        num_courts_for_export = st.number_input(
+            "Number of courts for export:",
+            min_value=1,
+            value=st.session_state.num_courts if st.session_state.num_courts > 0 else 2,
+            key='num_courts_for_export'
+        )
+
+        if st.button("Generate Excel File"):
+            excel_buffer = export_to_excel_logic(num_games_for_export, num_courts_for_export)
+            if excel_buffer:
+                st.download_button(
+                    label="Download Excel File",
+                    data=excel_buffer,
+                    file_name="pickleball_games.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+                st.success("Excel file generated! Click 'Download' to save it.")
     
-# Main content area for game results
-st.header(f"Game {st.session_state.game_number}")
-st.subheader("Court Assignments:")
-st.markdown(st.session_state.court_assignments_display)
-st.subheader("Players Sitting Out:")
-st.markdown(st.session_state.sitting_out_display if st.session_state.sitting_out_display else "No players sitting out this round.")
+    # Main content area for game results (Creator Mode)
+    st.header(f"Game {st.session_state.game_number}")
+    st.subheader("Court Assignments:")
+    st.markdown(st.session_state.court_assignments_display)
+    st.subheader("Players Sitting Out:")
+    st.markdown(st.session_state.sitting_out_display if st.session_state.sitting_out_display else "No players sitting out this round.")
 
 # --- AUTO-REFRESH LOOP FOR VIEWER MODE (FINAL FIX) ---
 if st.session_state.is_session_viewer:
